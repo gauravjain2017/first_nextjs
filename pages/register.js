@@ -1,36 +1,53 @@
-import { useState } from 'react';
+import { supabase } from '@/lib/supabaseClient'
+import bcrypt from 'bcryptjs'
 
-export default function Register() {
-  const [formData, setFormData] = useState({ name: '', email: '', password: '' });
-  const [message, setMessage] = useState('');
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).end()
 
-  const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
+  const { name, email, password } = req.body
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'All fields are required.' })
+  }
 
-    const res = await fetch('/api/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formData),
-    });
+  try {
+    // Check if user already exists
+    const { data: existingUser, error: fetchError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .single()
 
-    const data = await res.json();
-    setMessage(data.message || data.error);
-  };
+    if (existingUser) {
+      return res.status(400).json({ error: 'Email already registered.' })
+    }
 
-  return (
-    <div style={{ maxWidth: 400, margin: 'auto', padding: 20 }}>
-      <h2>Register</h2>
-      <form onSubmit={handleSubmit}>
-        <input name="name" placeholder="Name" onChange={handleChange} required /><br /><br />
-        <input name="email" type="email" placeholder="Email" onChange={handleChange} required /><br /><br />
-        <input name="password" type="password" placeholder="Password" onChange={handleChange} required /><br /><br />
-        <button type="submit">Register</button>
-      </form>
-      {message && <p>{message}</p>}
-    </div>
-  );
+    if (fetchError && fetchError.code !== 'PGRST116') {
+      // Ignore "No rows found" error (code: PGRST116)
+      console.error('Error checking user:', fetchError)
+      return res.status(500).json({ error: 'Error checking existing user.' })
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10)
+
+    // Insert new user
+    const { error: insertError } = await supabase.from('users').insert([
+      {
+        name,
+        email,
+        password: hashedPassword
+      }
+    ])
+
+    if (insertError) {
+      console.error('Error inserting user:', insertError)
+      return res.status(500).json({ error: 'Error creating user.' })
+    }
+
+    return res.status(200).json({ message: 'Registration successful!' })
+  } catch (err) {
+    console.error('Unexpected error:', err)
+    res.status(500).json({ error: 'Something went wrong.' })
+  }
 }
