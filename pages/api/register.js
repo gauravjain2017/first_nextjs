@@ -1,31 +1,50 @@
-import pool from '@/lib/db';
-import bcrypt from 'bcryptjs';
+import { supabase } from '@/lib/supabaseClient'
+import bcrypt from 'bcryptjs'
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).end();
+  if (req.method !== 'POST') return res.status(405).end()
 
-  const { name, email, password } = req.body;
+  const { name, email, password } = req.body
 
   if (!name || !email || !password) {
-    return res.status(400).json({ error: 'All fields are required.' });
+    return res.status(400).json({ error: 'All fields are required.' })
   }
 
   try {
-    const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-    if (existingUser.rows.length > 0) {
-      return res.status(400).json({ error: 'Email already registered.' });
+    // Check if email already exists
+    const { data: existingUser, error: fetchError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle()
+
+    if (fetchError) {
+      console.error('Fetch error:', fetchError)
+      return res.status(500).json({ error: 'Error checking user.' })
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    if (existingUser) {
+      return res.status(400).json({ error: 'Email already registered.' })
+    }
 
-    await pool.query(
-      'INSERT INTO users (name, email, password) VALUES ($1, $2, $3)',
-      [name, email, hashedPassword]
-    );
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10)
 
-    return res.status(200).json({ message: 'Registration successful!' });
+    // Insert new user
+    const { error: insertError } = await supabase.from('users').insert({
+      name,
+      email,
+      password: hashedPassword
+    })
+
+    if (insertError) {
+      console.error('Insert error:', insertError)
+      return res.status(500).json({ error: 'Error inserting user.' })
+    }
+
+    return res.status(200).json({ message: 'Registration successful!' })
   } catch (err) {
-    console.error('Error during registration:', err);
-    res.status(500).json({ error: 'Something went wrong.' });
+    console.error('Unexpected error:', err)
+    res.status(500).json({ error: 'Something went wrong.' })
   }
 }
